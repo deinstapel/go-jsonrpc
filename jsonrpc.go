@@ -3,7 +3,7 @@ package jsonrpc
 import (
 	"context"
 	"encoding/json"
-	"log"
+	"log/slog"
 	"sync"
 	"sync/atomic"
 
@@ -51,13 +51,22 @@ type peer struct {
 type onCallResponse func(data json.RawMessage, err error)
 
 func NewPeer(ctx context.Context, t Transport, options ...PeerOption) Peer {
-	opts := &PeerOptions{
-		IDGenerator: func() string { return xid.New().String() },
-	}
+	opts := &PeerOptions{}
 
 	for _, option := range options {
 		option(opts)
 	}
+
+	if opts.IDGenerator == nil {
+		opts.IDGenerator = func() string {
+			return xid.New().String()
+		}
+	}
+	if opts.logger == nil {
+		opts.logger = slog.Default()
+	}
+
+	opts.logger = opts.logger.With(slog.String("module", "jsonrpc"))
 
 	p := &peer{
 		transport:     t,
@@ -68,6 +77,8 @@ func NewPeer(ctx context.Context, t Transport, options ...PeerOption) Peer {
 	}
 
 	t.OnClose(func() {
+		p.opts.logger.Debug("transport closed")
+
 		p.callLock.Lock()
 		for _, ch := range p.calls {
 			ch(nil, ErrTransportClosed)
@@ -86,6 +97,7 @@ func NewPeer(ctx context.Context, t Transport, options ...PeerOption) Peer {
 		p.isClosed.Store(true)
 
 		if p.onClose != nil {
+			p.opts.logger.Debug("calling onClose")
 			p.onClose()
 		}
 	})
@@ -139,8 +151,10 @@ func (p *peer) handleIncomingMessage(ctx context.Context, msg message) {
 	}
 
 	if len(msg.Method) > 0 {
+		log := p.opts.logger.With(slog.String("method", msg.Method))
 		// incoming message is call
 		if len(msg.ID) == 0 {
+			log = log.With(slog.String("id", msg.ID))
 			// incoming message is notify
 			go func() {
 				p.subscriptionLock.Lock()
@@ -148,6 +162,7 @@ func (p *peer) handleIncomingMessage(ctx context.Context, msg message) {
 				p.subscriptionLock.Unlock()
 
 				if ok {
+					log.Debug("calling subscription handler")
 					handler(ctx, msg.Params)
 				}
 			}()
@@ -159,18 +174,21 @@ func (p *peer) handleIncomingMessage(ctx context.Context, msg message) {
 				p.registrationLock.Unlock()
 
 				if ok {
+					log.Debug("calling rpc handler")
 					result, err := handler(ctx, msg.Params)
 					if err != nil {
 						if rpcErr, ok := err.(*RPCErr); ok {
 							// if the user returned an rpcErr, clone it and set the id
 							p.sendError(newRpcErr(&msg.ID, rpcErr.code, rpcErr.message))
 						} else {
+							log.Warn("local rpc returned non-rpc error", slog.Any("error", err))
 							p.sendError(errInternal(msg.ID))
 						}
 						return
 					}
 					resultBytes, err := json.Marshal(result)
 					if err != nil {
+						log.Warn("error serializing result", slog.Any("error", err))
 						p.sendError(errInternal(msg.ID))
 						return
 					}
@@ -184,13 +202,15 @@ func (p *peer) handleIncomingMessage(ctx context.Context, msg message) {
 				}
 			}()
 		}
-	} else {
+	} else if len(msg.ID) > 0 {
+		log := p.opts.logger.With(slog.String("id", msg.ID))
 		// incoming message is response
 		p.callLock.Lock()
 		cb, ok := p.calls[msg.ID]
 		p.callLock.Unlock()
 
 		if ok {
+			log.Debug("got call response")
 			var err error
 
 			// if error is set, it overwrites result
@@ -200,7 +220,13 @@ func (p *peer) handleIncomingMessage(ctx context.Context, msg message) {
 			}
 
 			cb(msg.Result, err)
+		} else {
+			log.Debug("got call response for unknown call, maybe canceled")
 		}
+	} else {
+		// either method or ID & result/errors must be set
+		p.opts.logger.Info("client sent invalid request")
+		p.sendError(errInvalidRequest)
 	}
 }
 
@@ -231,7 +257,7 @@ func (p *peer) sendError(err *RPCErr) {
 func (p *peer) sendJson(data any) {
 	dataBytes, err := json.Marshal(data)
 	if err != nil {
-		log.Printf("error marshalling message: %v", err)
+		p.opts.logger.Warn("error marshalling message", slog.Any("error", err))
 		return
 	}
 	p.transport.Send(dataBytes)

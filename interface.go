@@ -40,6 +40,7 @@ package jsonrpc
 import (
 	"context"
 	"encoding/json"
+	"log/slog"
 )
 
 // Transport wraps an aribtrary underlying connection between both peers.
@@ -125,6 +126,7 @@ type Peer interface {
 // PeerOptions contains options for creating a new Peer.
 type PeerOptions struct {
 	IDGenerator func() string
+	logger      *slog.Logger
 }
 
 // RPCHandler is a function that handles an incoming RPC request.
