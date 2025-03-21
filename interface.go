@@ -155,3 +155,10 @@ func WithIDGenerator(gen IDGenerator) PeerOption {
 		opts.IDGenerator = gen
 	}
 }
+
+// WithLogger sets the logger for the peer.
+func WithLogger(logger *slog.Logger) PeerOption {
+	return func(opts *PeerOptions) {
+		opts.logger = logger
+	}
+}
