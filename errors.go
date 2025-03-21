@@ -3,11 +3,19 @@ package jsonrpc
 import "errors"
 
 var ErrTransportClosed = errors.New("transport closed")
-var ErrParseError = newRpcErr(nil, jsonParseErr, "Parse error")
-var ErrInvalidRequest = newRpcErr(nil, invalidRequestErr, "Invalid Request")
-var ErrMethodNotFound = newRpcErr(nil, methodNotFoundErr, "Method not found")
-var ErrInvalidParams = newRpcErr(nil, invalidParamsErr, "Invalid params")
-var ErrInternal = newRpcErr(nil, internalErr, "Internal error")
+
+// ErrInvalidParams is returned when the params of a request are invalid.
+var ErrInvalidParams error = newRpcErr(nil, invalidParamsErr, "Invalid params")
+
+// ErrInternal is returned when an internal error occurs in a handler or the
+var ErrInternal error = newRpcErr(nil, internalErr, "Internal error")
+
+// error factories for internal use
+var errParseError = newRpcErr(nil, jsonParseErr, "Parse error")
+var errInvalidRequest = newRpcErr(nil, invalidRequestErr, "Invalid Request")
+var errMethodNotFound = func(id string) *RPCErr { return newRpcErr(&id, methodNotFoundErr, "Method not found") }
+var errInvalidParams = func(id string) *RPCErr { return newRpcErr(&id, internalErr, "Invalid params") }
+var errInternal = func(id string) *RPCErr { return newRpcErr(&id, internalErr, "Internal error") }
 
 var ErrMethodAlreadyRegistered = errors.New("Method already registered")
 var ErrAlreadySubscribed = errors.New("Already subscribed")
@@ -35,6 +43,11 @@ func (e *RPCErr) ID() string {
 		return ""
 	}
 	return *e.id
+}
+
+// NewRPCErr creates a new RPC error with the given code, and message.
+func NewRPCErr(code int, message string) *RPCErr {
+	return newRpcErr(nil, code, message)
 }
 
 func newRpcErr(id *string, code int, message string) *RPCErr {

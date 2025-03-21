@@ -108,11 +108,11 @@ func (p *peer) run(ctx context.Context) {
 			if raw[0] == '[' {
 				var msgs []message
 				if err := json.Unmarshal(raw, &msgs); err != nil {
-					p.sendError(ErrParseError)
+					p.sendError(errParseError)
 					continue
 				}
 				if len(msgs) == 0 {
-					p.sendError(ErrInvalidRequest)
+					p.sendError(errInvalidRequest)
 					continue
 				}
 				for _, msg := range msgs {
@@ -121,7 +121,7 @@ func (p *peer) run(ctx context.Context) {
 			} else {
 				var msg message
 				if err := json.Unmarshal(raw, &msg); err != nil {
-					p.sendError(ErrParseError)
+					p.sendError(errParseError)
 					continue
 				}
 				p.handleIncomingMessage(callCtx, msg)
@@ -134,7 +134,7 @@ func (p *peer) run(ctx context.Context) {
 
 func (p *peer) handleIncomingMessage(ctx context.Context, msg message) {
 	if msg.JSONRPC != "2.0" {
-		p.sendError(ErrInvalidRequest)
+		p.sendError(errInvalidRequest)
 		return
 	}
 
@@ -162,15 +162,16 @@ func (p *peer) handleIncomingMessage(ctx context.Context, msg message) {
 					result, err := handler(ctx, msg.Params)
 					if err != nil {
 						if rpcErr, ok := err.(*RPCErr); ok {
-							p.sendError(rpcErr)
+							// if the user returned an rpcErr, clone it and set the id
+							p.sendError(newRpcErr(&msg.ID, rpcErr.code, rpcErr.message))
 						} else {
-							p.sendError(ErrInternal)
+							p.sendError(errInternal(msg.ID))
 						}
 						return
 					}
 					resultBytes, err := json.Marshal(result)
 					if err != nil {
-						p.sendError(ErrInternal)
+						p.sendError(errInternal(msg.ID))
 						return
 					}
 					p.sendJson(message{
@@ -179,7 +180,7 @@ func (p *peer) handleIncomingMessage(ctx context.Context, msg message) {
 						ID:      msg.ID,
 					})
 				} else {
-					p.sendError(ErrMethodNotFound)
+					p.sendError(errMethodNotFound(msg.ID))
 				}
 			}()
 		}
